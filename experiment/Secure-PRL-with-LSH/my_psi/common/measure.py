@@ -1,12 +1,13 @@
+import os
 import subprocess
-import threading
-from random import seed, randint
+from random import random, seed, randint
 from datetime import datetime
 from subprocess import Popen, PIPE
 from time import sleep
 from os import remove, killpg, getpgid
-from os.path import exists
 from signal import SIGTERM
+import sys
+
 
 def read_and_delete_file(fname):
     f = open(fname, 'r')
@@ -27,10 +28,25 @@ def experiment(num_eles, num_bins, out, srv_seed=10, cli_seed=100, num_bits=16):
     try:
         process0 = Popen([str(x) for x in ['./my_psi', "-r", 0, "-n", num_eles, "-b", num_bits, "-m", num_bins, "-s", srv_seed, "-f", "inp0"]], stdout=PIPE, stderr=PIPE)
         process1 = Popen([str(x) for x in ['./my_psi', "-r", 1, "-n", num_eles, "-b", num_bits, "-m", num_bins, "-s", cli_seed, "-f", "inp1"]], stdout=PIPE, stderr=PIPE)
+
+        # Read the output from the pipe
+        stdout_data, stderr_data = process0.communicate()
+
+        # Popen returns bytes, so decode it to a standard string
+        cout = stdout_data.decode('utf-8')
+        cerr = stderr_data.decode('utf-8')
+
         process0.wait(timeout=timeout_s)
         process1.wait(timeout=10)
     except subprocess.TimeoutExpired:
         killpg(getpgid(p.pid), SIGTERM)
+        return
+
+    # if the output files don't exist, it means the experiment failed (e.g., due to a timeout or crash), so we skip reading results
+    if not (os.path.exists(f"0{srv_seed}.txt") and os.path.exists(f"1{cli_seed}.txt")):
+        print("C implementation was unsuccessful!")
+        print(f"Server output: \n{cout}")
+        print(f"Server error: \n{cerr}")
         return
 
     srv_time, srv_cpu_time, srv_comp = read_and_delete_file(f"0{srv_seed}.txt")
@@ -42,38 +58,46 @@ def experiment(num_eles, num_bins, out, srv_seed=10, cli_seed=100, num_bits=16):
 
     out.write(f"{num_eles}, {num_bins}, {time}, {srv_cpu_time}, {cli_cpu_time}, {srv_comp}\n")
 
-seed(datetime.now())
 
-count=1
+# Ensure the script receives the output file argument from my_test.sh
+if len(sys.argv) < 2:
+    print("Usage: python3 measure.py <output_directory>")
+    sys.exit(1)
 
-run_num=0
-while (exists(f"new_run{run_num}.csv")):
-    run_num += 1
+out_dir = sys.argv[1]
+out_filename = f"{out_dir}/results.csv"
 
-out_filename = f"new_run{run_num}.csv"
+# Seed the PRNG using the output path string. 
+# This ensures deterministic, reproducible seeds tied to the specific RUN_KEY.
+seed(out_filename)
 
-outfile = open(out_filename, 'w')
-outfile.close()
+# Initialize the output file (this creates it or clears an existing one)
+with open(out_filename, 'w') as outfile:
+    outfile.write("num_eles, num_bins, time, srv_cpu_time, cli_cpu_time, comp\n")
 
-for run in [1,2,3]:
+count = 1
 
+for run in [1, 2, 3]:
     print(f"start measuring run #{run}")
 
-    for num_eles in range(500, 3500, 50):
+    for num_eles in range(500, 700, 50):
         for num_bins in [8]:
-            # num_bins = 8
-            outfile = open(out_filename, 'a')
-            # s_seed = randint(1,500) * 10 + count
-            # c_seed = randint(501, 1000) * 10 + count
-            s_seed = 0
-            c_seed = 1
-            print (f"#{run}: server seed {s_seed} and client seed {c_seed}")
+            
+            # Generate deterministic seeds based on the initial string seed
+            s_seed = randint(1, 500) * 10 + count
+            c_seed = randint(501, 1000) * 10 + count
+            
+            print(f"#{run}: server seed {s_seed} and client seed {c_seed}")
             sleep(1)
+            
             try:
-                experiment(num_eles, num_bins, outfile, srv_seed=s_seed, cli_seed=c_seed)
-            except:
-                print(f"An exception occurred with server seed {s_seed} and client seed {c_seed}")
-                fail = open(f'failed{num_eles}eles{num_bins}bins', 'w')
-                fail.close()
-            outfile.close()
+                # Open in append mode for the experiment execution
+                with open(out_filename, 'a') as outfile:
+                    experiment(num_eles, num_bins, outfile, srv_seed=s_seed, cli_seed=c_seed)
+            except Exception as e:
+                print(f"An exception occurred with server seed {s_seed} and client seed {c_seed}: {e}")
+                # Log the specific failure for debugging
+                with open(f'{out_dir}/failed_{num_eles}eles_{num_bins}bins.txt', 'w') as fail:
+                    fail.write(f"Failed with exception: {e}\n")
+            
             count += 1
