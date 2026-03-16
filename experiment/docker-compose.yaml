@@ -1,0 +1,14 @@
+services:
+  benchmark:
+    build: .
+    environment:
+      - RUN_KEY=${RUN_KEY:-}
+      - S3_BUCKET=${S3_BUCKET:-}
+      - S3_PREFIX=${S3_PREFIX:-benchmark-results}
+      - AWS_REGION=${AWS_REGION:-us-east-2}
+      - AWS_ACCESS_KEY_ID=${AWS_ACCESS_KEY_ID:-}
+      - AWS_SECRET_ACCESS_KEY=${AWS_SECRET_ACCESS_KEY:-}
+      - AWS_SESSION_TOKEN=${AWS_SESSION_TOKEN:-}
+    volumes:
+      # Persist results on the host so run_experiments.sh can collect them
+      - ./results:/app/results
