@@ -52,7 +52,7 @@ if [ -z "$ECR_REPO_URI" ] && [ "$MODE" == "batch" ]; then
 fi
 
 # Generate a unique key for this run
-RUN_KEY="run-$(date -u +%Y%m%dT%H%M%SZ)-$$"
+RUN_KEY="run_$(date -u +%Y_%m_%d_%H%M%S)_$$"
 echo "=== Run Key: $RUN_KEY ==="
 
 if [ "$MODE" == "local" ]; then

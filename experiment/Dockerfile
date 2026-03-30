@@ -11,15 +11,18 @@ RUN apt-get update && \
 # Clone the ABY framework
 RUN git clone https://github.com/encryptogroup/ABY.git
 
+# Build ABY libraries (no examples) — cached unless ABY itself changes
+WORKDIR /usr/src/app/ABY/build
+RUN cmake .. && make -j$(nproc)
+
 # Copy the custom psi source code into the ABY examples directory
 COPY --exclude="**/*.py" Secure-PRL-with-LSH/my_psi /usr/src/app/ABY/src/examples/my_psi
 
 # Append the new subdirectory to the ABY examples CMakeLists.txt
 RUN echo 'add_subdirectory(my_psi)' >> /usr/src/app/ABY/src/examples/CMakeLists.txt
 
-# Configure and build the ABY project (including the new my_psi example)
-WORKDIR /usr/src/app/ABY/build
-RUN cmake .. -DABY_BUILD_EXE=On && make -j$(nproc)
+# Reconfigure and build only my_psi (ABY libs already built above)
+RUN cmake .. -DABY_BUILD_EXE=On && make -j$(nproc) my_psi
 
 # Run stage
 FROM --platform=linux/amd64 debian:bookworm-slim
