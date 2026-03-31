@@ -28,7 +28,7 @@
 
 int32_t read_test_options(int32_t* argcp, char*** argvp, e_role* role,
 		uint32_t* bitlen, uint32_t* neles, uint32_t * nbins, uint32_t* secparam, std::string* address,
-		uint16_t* port, int32_t* test_op, uint32_t * seed, std::string* fname) {
+		uint16_t* port, int32_t* test_op, uint32_t * seed, std::string* fname, uint32_t* threshold) {
 
 	uint32_t int_role = 0, int_port = 0;
 	bool useffc = false;
@@ -42,7 +42,8 @@ int32_t read_test_options(int32_t* argcp, char*** argvp, e_role* role,
 			  {	(void*) address, T_STR, "a", "IP-address, default: localhost", false, false },
 			  {	(void*) &int_port, T_NUM, "p", "Port, default: 7766", false, false },
 			  {	(void*) seed, T_NUM, "s", "Seed, default: 0", false, false },
-			  {	(void*) fname, T_STR, "f", "location of input file, default: a", false, false }
+			  {	(void*) fname, T_STR, "f", "location of input file, default: a", false, false },
+			  {	(void*) threshold, T_NUM, "t", "Threshold for hamming distance compare", true, false },
 			};
 
 	if (!parse_options(argcp, argvp, options,
@@ -76,9 +77,10 @@ int main(int argc, char** argv) {
 	e_mt_gen_alg mt_alg = MT_OT;
 	uint32_t seed = 0;
 	std::string fname = "";
+	uint32_t threshold = 0;
 
 	read_test_options(&argc, &argv, &role, &bitlen, &neles, &nbins, &secparam, &address,
-			&port, &test_op, &seed, &fname);
+			&port, &test_op, &seed, &fname, &threshold);
 
 	seclvl seclvl = get_sec_lvl(secparam);
 
@@ -86,7 +88,7 @@ int main(int argc, char** argv) {
 
 	std::cout << "begin PSI circuit with seed " << seed << std::endl;
 
-	test_psi_circuit(role, address, port, seclvl, neles, bitlen, nbins, nthreads, mt_alg, seed, fname);
+	test_psi_circuit(role, address, port, seclvl, neles, bitlen, nbins, nthreads, mt_alg, seed, fname, threshold);
 
 
 	std::cout << "PSI circuit successfully executed" << std::endl;

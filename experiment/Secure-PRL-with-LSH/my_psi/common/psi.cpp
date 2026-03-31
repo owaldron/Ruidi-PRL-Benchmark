@@ -80,8 +80,20 @@ void read_file_hex(uint32_t *srv_set, uint32_t *cli_set, uint32_t neles, std::st
 	}
 }
 
-int32_t test_psi_circuit(e_role role, const std::string& address, uint16_t port, seclvl seclvl,
-		uint32_t neles, uint32_t bitlen, uint32_t nbins, uint32_t nthreads, e_mt_gen_alg mt_alg, uint32_t seed, std::string fname) {
+int32_t test_psi_circuit(
+	e_role role,
+	const std::string& address,
+	uint16_t port,
+	seclvl seclvl,
+	uint32_t neles,
+	uint32_t bitlen,
+	uint32_t nbins,
+	uint32_t nthreads,
+	e_mt_gen_alg mt_alg,
+	uint32_t seed,
+	std::string fname,
+	uint32_t threshold
+) {
 	bool measure_bytes = false;
 	uint64_t mask = ((uint64_t) 1 << bitlen)-1;
 	uint32_t *srv_set, *cli_set;
@@ -128,9 +140,8 @@ int32_t test_psi_circuit(e_role role, const std::string& address, uint16_t port,
 	// owaldron NOTE: added logic to precompute bit sample indices for a bitsampling LSH
 
 	// owaldron: Precompute the LSH indices to be used
-	// owaldron: This is where you can control LSH bitlen
-	// owaldron TODO: hook this up to CLI
-	uint32_t num_lsh_bits = 3;
+	// owaldron: this should match the number of required bins
+	uint32_t num_lsh_bits = static_cast<uint32_t>(std::log2(nbins));
 
 	// owaldron: Deterministically select num_lsh_bits positions from [0, bitlen) using seed
 	std::mt19937 rng(seed);
@@ -276,7 +287,7 @@ int32_t test_psi_circuit(e_role role, const std::string& address, uint16_t port,
 	}
 
 	uint32_t num_comparisons = ncomparisons(T1Expanded, T2Expanded);
-	std::vector<uint32_t> match_result = intersect(T1Expanded, T2Expanded, party, bc, bitlen);
+	std::vector<uint32_t> match_result = intersect(T1Expanded, T2Expanded, party, bc, bitlen, threshold);
 
 	auto it = std::unique(match_result.begin(), match_result.end());
 
@@ -1838,7 +1849,7 @@ uint32_t ncomparisons(const std::vector<bin> & T1, const std::vector<bin> & T2){
 	return size;
 };
 
-std::vector<uint32_t> intersect(const std::vector<bin> & T1, const std::vector<bin> & T2, ABYParty * party, BooleanCircuit * bc, uint32_t bitlen){
+std::vector<uint32_t> intersect(const std::vector<bin> & T1, const std::vector<bin> & T2, ABYParty * party, BooleanCircuit * bc, uint32_t bitlen, uint32_t threshold){
 	uint32_t bin_size = T1[0].data.size();
 	uint32_t num_bins = T1.size();
 	uint32_t words = T1[0].data.empty() ? 1 : T1[0].data[0].size();
@@ -1868,7 +1879,14 @@ std::vector<uint32_t> intersect(const std::vector<bin> & T1, const std::vector<b
 	share* shr_T2 = bc->PutSharedSIMDINGate(size, T2expanded.data(), bitlen);
 	
 	// owaldron: Comparison funciton
-	share* comp = bc->PutEQGate(shr_T1, shr_T2);
+	// owaldron NOTE: updated to use Hamming distance compare
+	uint32_t hw_bitlen = std::ceil(std::log2(bitlen + 1));
+    // owaldron: create a vector with 'size' elements, all set to the threshold value.
+    std::vector<uint32_t> thresh_vec(size, threshold);
+    share* s_threshold = bc->PutSIMDCONSGate(size, thresh_vec.data(), hw_bitlen);
+    share* xor_out = bc->PutXORGate(shr_T1, shr_T2);
+    share* hw_out = bc->PutHammingWeightGate(xor_out);
+    share* comp = bc->PutGTGate(s_threshold, hw_out);
 
 	// owaldron NOTE: modified to have `bitlen`-bit length sentinel
 	std::vector<uint32_t> zeros(size * words, 0);

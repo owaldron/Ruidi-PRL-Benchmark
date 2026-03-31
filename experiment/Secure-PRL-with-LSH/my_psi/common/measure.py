@@ -22,15 +22,33 @@ def read_and_delete_file(fname):
     remove(fname)
     return time, cpu_time, comp
 
-def experiment(num_eles, num_bins, out, srv_seed=10, cli_seed=100, num_bits=16):
+def experiment(num_eles, num_bins, out, srv_seed=10, cli_seed=100, num_bits=16, threshold=32):
     # subprocess.run("./my_psi", "-r", 0, "-n", num_eles, "-b", num_bits, "-m", num_bins, "-s", seed)
     timeout_s = 60*15
 
     process0 = None
     process1 = None
     try:
-        process0 = Popen([str(x) for x in ['./my_psi', "-r", 0, "-n", num_eles, "-b", num_bits, "-m", num_bins, "-s", srv_seed, "-f", "server_set.txt"]], stdout=PIPE, stderr=PIPE)
-        process1 = Popen([str(x) for x in ['./my_psi', "-r", 1, "-n", num_eles, "-b", num_bits, "-m", num_bins, "-s", cli_seed, "-f", "client_set.txt"]], stdout=PIPE, stderr=PIPE)
+        process0 = Popen([str(x) for x in [
+            './my_psi',
+            "-r", 0,
+            "-n", num_eles,
+            "-b", num_bits,
+            "-m", num_bins,
+            "-s", srv_seed,
+            "-f", "server_set.txt",
+            "-t", threshold
+        ]], stdout=PIPE, stderr=PIPE)
+        process1 = Popen([str(x) for x in [
+            './my_psi',
+            "-r", 1,
+            "-n", num_eles,
+            "-b", num_bits,
+            "-m", num_bins,
+            "-s", cli_seed,
+            "-f", "client_set.txt",
+            "-t", threshold
+        ]], stdout=PIPE, stderr=PIPE)
 
         # Communicate with both processes concurrently so neither blocks waiting
         # for the other to connect/finish
@@ -87,7 +105,7 @@ with open(out_filename, 'w') as outfile:
     outfile.write("num_eles, num_bins, time, srv_cpu_time, cli_cpu_time, comp\n")
 
 count = 1
-NUM_RUNS = 10
+NUM_RUNS = 5
 
 for run in range(NUM_RUNS):
     print(f"start measuring run #{run}")

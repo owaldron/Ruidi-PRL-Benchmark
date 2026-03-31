@@ -57,8 +57,20 @@ public:
 std::vector<std::string> split(const std::string & s, const std::string & by);
 int find_communication(const std::string & s);
 
-int32_t test_psi_circuit(e_role role, const std::string& address, uint16_t port, seclvl seclvl,
-		uint32_t nvals, uint32_t bitlen, uint32_t nbits, uint32_t nthreads, e_mt_gen_alg mt_alg, uint32_t seed, std::string fname);
+int32_t test_psi_circuit(
+	e_role role,
+	const std::string& address,
+	uint16_t port,
+	seclvl seclvl,
+	uint32_t neles,
+	uint32_t bitlen,
+	uint32_t nbins,
+	uint32_t nthreads,
+	e_mt_gen_alg mt_alg,
+	uint32_t seed,
+	std::string fname,
+	uint32_t threshold
+);
 uint32_t lsh(uint32_t interval, uint32_t input);
 uint32_t noise(uint32_t mask, e_role role);
 std::vector<uint32_t> random_noise(uint32_t bitlen);
@@ -99,7 +111,7 @@ void Fill_dim_backward_pass(std::vector<bin> & in, ABYParty * party, BooleanCirc
 void AlignTable(std::vector<bin> & S2, ABYParty * party, BooleanCircuit* bc, uint32_t max_bin_number);
 
 uint32_t ncomparisons(const std::vector<bin> & T1, const std::vector<bin> & T2);
-std::vector<uint32_t> intersect(const std::vector<bin> & T1, const std::vector<bin> & T2, ABYParty * party, BooleanCircuit * bc, uint32_t bitlen);
+std::vector<uint32_t> intersect(const std::vector<bin> & T1, const std::vector<bin> & T2, ABYParty * party, BooleanCircuit * bc, uint32_t bitlen, uint32_t threshold);
 
 void Fwd_pass_naive(std::vector<bin> & in, ABYParty * party, BooleanCircuit* bc, e_role role);
 
