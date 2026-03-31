@@ -105,12 +105,12 @@ with open(out_filename, 'w') as outfile:
     outfile.write("num_eles, num_bins, time, srv_cpu_time, cli_cpu_time, comp\n")
 
 count = 1
-NUM_RUNS = 5
+NUM_RUNS = 3
 
 for run in range(NUM_RUNS):
     print(f"start measuring run #{run}")
 
-    for num_eles in [1000]:
+    for num_eles in [512, 1024, 2048]:
         for num_bins in [8]:
             
             # Generate deterministic seeds based on the initial string seed
