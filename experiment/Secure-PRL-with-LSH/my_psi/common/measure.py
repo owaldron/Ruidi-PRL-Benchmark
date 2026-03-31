@@ -6,6 +6,7 @@ from subprocess import Popen, PIPE
 from time import sleep
 from os import remove, killpg, getpgid
 from signal import SIGTERM
+from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeoutError
 import sys
 
 
@@ -25,28 +26,38 @@ def experiment(num_eles, num_bins, out, srv_seed=10, cli_seed=100, num_bits=16):
     # subprocess.run("./my_psi", "-r", 0, "-n", num_eles, "-b", num_bits, "-m", num_bins, "-s", seed)
     timeout_s = 60*15
 
+    process0 = None
+    process1 = None
     try:
-        process0 = Popen([str(x) for x in ['./my_psi', "-r", 0, "-n", num_eles, "-b", num_bits, "-m", num_bins, "-s", srv_seed, "-f", "inp0"]], stdout=PIPE, stderr=PIPE)
-        process1 = Popen([str(x) for x in ['./my_psi', "-r", 1, "-n", num_eles, "-b", num_bits, "-m", num_bins, "-s", cli_seed, "-f", "inp1"]], stdout=PIPE, stderr=PIPE)
+        process0 = Popen([str(x) for x in ['./my_psi', "-r", 0, "-n", num_eles, "-b", num_bits, "-m", num_bins, "-s", srv_seed, "-f", "server_set.txt"]], stdout=PIPE, stderr=PIPE)
+        process1 = Popen([str(x) for x in ['./my_psi', "-r", 1, "-n", num_eles, "-b", num_bits, "-m", num_bins, "-s", cli_seed, "-f", "client_set.txt"]], stdout=PIPE, stderr=PIPE)
 
-        # Read the output from the pipe
-        stdout_data, stderr_data = process0.communicate()
+        # Communicate with both processes concurrently so neither blocks waiting
+        # for the other to connect/finish
+        with ThreadPoolExecutor(max_workers=2) as ex:
+            f0 = ex.submit(process0.communicate)
+            f1 = ex.submit(process1.communicate)
+            try:
+                stdout_data, stderr_data = f0.result(timeout=timeout_s)
+                f1.result(timeout=timeout_s)
+            except FuturesTimeoutError:
+                raise subprocess.TimeoutExpired(cmd='my_psi', timeout=timeout_s)
 
         # Popen returns bytes, so decode it to a standard string
         cout = stdout_data.decode('utf-8')
         cerr = stderr_data.decode('utf-8')
-
-        process0.wait(timeout=timeout_s)
-        process1.wait(timeout=10)
     except subprocess.TimeoutExpired:
-        killpg(getpgid(p.pid), SIGTERM)
+        if process0 is not None:
+            killpg(getpgid(process0.pid), SIGTERM)
+        if process1 is not None:
+            killpg(getpgid(process1.pid), SIGTERM)
         return
 
     # if the output files don't exist, it means the experiment failed (e.g., due to a timeout or crash), so we skip reading results
     if not (os.path.exists(f"0{srv_seed}.txt") and os.path.exists(f"1{cli_seed}.txt")):
-        print("C implementation was unsuccessful!")
-        print(f"Server output: \n{cout}")
-        print(f"Server error: \n{cerr}")
+        print("C implementation was unsuccessful!", flush=True)
+        print(f"Server output: \n{cout}", flush=True)
+        print(f"Server error: \n{cerr}", flush=True)
         return
 
     srv_time, srv_cpu_time, srv_comp = read_and_delete_file(f"0{srv_seed}.txt")
@@ -54,7 +65,7 @@ def experiment(num_eles, num_bins, out, srv_seed=10, cli_seed=100, num_bits=16):
 
     time = round((float(srv_time) + float(cli_time)) / 2, 4)
 
-    print(f"neles: {num_eles},\tnbins: {num_bins},\ttime: {time},\tsrv cpu time: {srv_cpu_time},\tcli cpu time: {cli_cpu_time}\tcomp: {srv_comp}")
+    print(f"neles: {num_eles},\tnbins: {num_bins},\ttime: {time},\tsrv cpu time: {srv_cpu_time},\tcli cpu time: {cli_cpu_time}\tcomp: {srv_comp}", flush=True)
 
     out.write(f"{num_eles}, {num_bins}, {time}, {srv_cpu_time}, {cli_cpu_time}, {srv_comp}\n")
 
@@ -76,24 +87,26 @@ with open(out_filename, 'w') as outfile:
     outfile.write("num_eles, num_bins, time, srv_cpu_time, cli_cpu_time, comp\n")
 
 count = 1
+NUM_RUNS = 10
 
-for run in [1, 2, 3]:
+for run in range(NUM_RUNS):
     print(f"start measuring run #{run}")
 
-    for num_eles in range(500, 700, 50):
+    for num_eles in [1000]:
         for num_bins in [8]:
             
             # Generate deterministic seeds based on the initial string seed
             s_seed = randint(1, 500) * 10 + count
             c_seed = randint(501, 1000) * 10 + count
             
+            print("========================================")
             print(f"#{run}: server seed {s_seed} and client seed {c_seed}")
             sleep(1)
             
             try:
                 # Open in append mode for the experiment execution
                 with open(out_filename, 'a') as outfile:
-                    experiment(num_eles, num_bins, outfile, srv_seed=s_seed, cli_seed=c_seed)
+                    experiment(num_eles, num_bins, outfile, srv_seed=s_seed, cli_seed=c_seed, num_bits=256)
             except Exception as e:
                 print(f"An exception occurred with server seed {s_seed} and client seed {c_seed}: {e}")
                 # Log the specific failure for debugging

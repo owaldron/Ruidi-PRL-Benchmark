@@ -31,6 +31,8 @@
 #include <iostream>
 #include <fstream>
 #include <regex>
+#include <random>
+#include <unordered_set>
 #define PSI
 
 void input(uint32_t *srv_set, uint32_t *cli_set, uint32_t neles, uint64_t mask){
@@ -57,67 +59,54 @@ void read_file(uint32_t *srv_set, uint32_t *cli_set, uint32_t neles, std::string
 	}
 }
 
+// author: owaldron
+// Reads a file storing input bits in hex format
+// Note that both client and server read the same file; this is okay, we 
+// expect the other party to call this identically, so it will handle it's data
+void read_file_hex(uint32_t *srv_set, uint32_t *cli_set, uint32_t neles, std::string fname, uint32_t bitlen){
+	uint32_t words = bitlen / 32;
+	uint32_t hex_digits = bitlen / 4;
+	ifstream f;
+	f.open(fname);
+	std::string line;
+	for (uint32_t i = 0; i < neles; i++) {
+		std::getline(f, line);
+		while (line.size() < hex_digits) line = "0" + line;
+		for (uint32_t w = 0; w < words; w++) {
+			uint32_t val = (uint32_t)std::stoul(line.substr(w * 8, 8), nullptr, 16);
+			srv_set[i * words + w] = val;
+			cli_set[i * words + w] = val;
+		}
+	}
+}
+
 int32_t test_psi_circuit(e_role role, const std::string& address, uint16_t port, seclvl seclvl,
 		uint32_t neles, uint32_t bitlen, uint32_t nbins, uint32_t nthreads, e_mt_gen_alg mt_alg, uint32_t seed, std::string fname) {
 	bool measure_bytes = false;
-	assert(bitlen <= 32);
 	uint64_t mask = ((uint64_t) 1 << bitlen)-1;
 	uint32_t *srv_set, *cli_set;
-	srv_set = (uint32_t*) malloc(sizeof(uint32_t) * neles);
-	cli_set = (uint32_t*) malloc(sizeof(uint32_t) * neles);
+	// owaldron NOTE: modified to use dynamic number of bits per element
+	srv_set = (uint32_t*) malloc(sizeof(uint32_t) * (bitlen/32) * neles);
+	cli_set = (uint32_t*) malloc(sizeof(uint32_t) * (bitlen/32) * neles);
 	uint32_t rndval;
-
-	ABYParty* party = new ABYParty(role, address, port, seclvl, bitlen, nthreads,
-		mt_alg, 80000000);
-
-	std::vector<Sharing*>& sharings = party->GetSharings();
-	BooleanCircuit* bc = (BooleanCircuit*) sharings[S_BOOL]->GetCircuitBuildRoutine();
-
-	// input(srv_set, cli_set, neles, mask);
-	read_file(srv_set, cli_set, neles, fname);
-	if (role == CLIENT){
-		std::cout << "client set:" << std::endl;
-		for(int32_t i = 0; i < neles; i++) {
-			std::cout << "v: " << cli_set[i] << " ";
-		}
-		std::cout << std::endl;
-	}
-	else{
-		std::cout << "server set:" << std::endl;
-		for(int32_t i = 0; i < neles; i++) {
-			std::cout << "v: " << srv_set[i] << " ";
-		}
-		std::cout << std::endl;
-	}
-
-	share* cli_shr = bc->PutSIMDINGate(neles, cli_set, (uint32_t) 32, CLIENT);
-	share* srv_shr = bc->PutSIMDINGate(neles, srv_set, (uint32_t) 32, SERVER);
-
-	cli_shr = bc->PutOUTGate(cli_shr, ALL);
-	srv_shr = bc->PutOUTGate(srv_shr, ALL);
-
-	party->ExecCircuit();
-
-	uint64_t* out;
-	uint32_t tmpbitlen, tmpnvals;
-	std::vector<uint32_t> cli_set_plaintext, srv_set_plaintext;
 	
-	cli_shr->get_clear_value_vec(&out, &tmpbitlen, &tmpnvals);
-
-	for (int i = 0; i < tmpnvals; i++){
-		cli_set_plaintext.push_back(out[i]);
+	// owaldron: Read input from file
+	// owaldron NOTE: modified to read raw bytes from a file of hex records
+	read_file_hex(srv_set, cli_set, neles, fname, bitlen);
+	
+	// owaldron NOTE: old code did a dummy circuit to exchange records, instead we build ground-truth intersection directly from input arrays
+	uint32_t words = bitlen / 32;
+	std::vector<std::vector<uint32_t>> cli_set_plaintext, srv_set_plaintext;
+	for (uint32_t i = 0; i < neles; i++){
+		cli_set_plaintext.push_back(std::vector<uint32_t>(cli_set + i * words, cli_set + i * words + words));
+		srv_set_plaintext.push_back(std::vector<uint32_t>(srv_set + i * words, srv_set + i * words + words));
 	}
 
-	srv_shr->get_clear_value_vec(&out, &tmpbitlen, &tmpnvals);
-
-	for (int i = 0; i < tmpnvals; i++){
-		srv_set_plaintext.push_back(out[i]);
-	}
-
-	std::vector<uint32_t> intersection;
-	for (auto e1 : cli_set_plaintext){
-		for (auto e2 : srv_set_plaintext){
+	std::vector<std::vector<uint32_t>> intersection;
+	for (auto& e1 : cli_set_plaintext){
+		for (auto& e2 : srv_set_plaintext){
 			if (e1 == e2){
+				// owaldron NOTE: Comparison is equality
 				intersection.push_back(e1);
 			}
 		}
@@ -125,21 +114,8 @@ int32_t test_psi_circuit(e_role role, const std::string& address, uint16_t port,
 
 	std::sort(intersection.begin(), intersection.end());
 
-	std::cout << "true intersection: "<< std::endl;
 
-	uint32_t count = 0;
-	for (auto e : intersection){
-		std::cout << e << "\t";
-		count ++;
-		if (count == 5){
-			std::cout << std::endl;
-			count = 0;
-		}
-	}
-	std::cout << std::endl;
-
-	delete party;
-
+	// owaldron: Actual PRL Logic starts here, so start the clock!
 	clock_t start, end;
 	double cpu_time_used;
 
@@ -149,13 +125,33 @@ int32_t test_psi_circuit(e_role role, const std::string& address, uint16_t port,
 
 	main_timer.start();
 
+	// owaldron NOTE: added logic to precompute bit sample indices for a bitsampling LSH
+
+	// owaldron: Precompute the LSH indices to be used
+	// owaldron: This is where you can control LSH bitlen
+	// owaldron TODO: hook this up to CLI
+	uint32_t num_lsh_bits = 3;
+
+	// owaldron: Deterministically select num_lsh_bits positions from [0, bitlen) using seed
+	std::mt19937 rng(seed);
+	std::uniform_int_distribution<uint32_t> dist(0, bitlen - 1);
+
+	std::vector<uint32_t> positions;
+	std::unordered_set<uint32_t> used;
+	while (positions.size() < num_lsh_bits) {
+		uint32_t pos = dist(rng);
+		if (used.find(pos) == used.end()) {
+			used.insert(pos);
+			positions.push_back(pos);
+		}
+	}
+
 	std::ostringstream strCout;
 
-
-	party = new ABYParty(role, address, port, seclvl, bitlen, nthreads,
+	ABYParty* party = new ABYParty(role, address, port, seclvl, bitlen, nthreads,
 		mt_alg, 80000000);
-	sharings = party->GetSharings();
-	bc = (BooleanCircuit*) sharings[S_BOOL]->GetCircuitBuildRoutine();
+	std::vector<Sharing*>& sharings = party->GetSharings();
+	BooleanCircuit* bc = (BooleanCircuit*) sharings[S_BOOL]->GetCircuitBuildRoutine();
 
 	std::cout << "resetted parties" << std::endl;
 
@@ -175,11 +171,14 @@ int32_t test_psi_circuit(e_role role, const std::string& address, uint16_t port,
 		srv_bins[i].a2 = 1;
 	}
 
-	uint32_t interval = (mask - 1) / nbins + 1;
 
+	// owaldron NOTE: modified to use dynamic number of bits per element 
 	for (uint32_t i = 0; i < neles; i++){
-		cli_bins[lsh(interval, cli_set[i])].data.push_back(cli_set[i]);
-		srv_bins[lsh(interval, srv_set[i])].data.push_back(srv_set[i]);
+		vector<uint32_t> cli_ele(cli_set + i * words, cli_set + i * words + words);
+		vector<uint32_t> srv_ele(srv_set + i * words, srv_set + i * words + words);
+		// owaldron NOTE: updated LSH to use bitsampling
+		cli_bins[bitsample_lsh(positions, cli_ele)].data.push_back(cli_ele);
+		srv_bins[bitsample_lsh(positions, srv_ele)].data.push_back(srv_ele);
 	}
 
 	// Smoothing bins
@@ -189,8 +188,8 @@ int32_t test_psi_circuit(e_role role, const std::string& address, uint16_t port,
 
 	// Padding bins
 
-	pad_bins(cli_smooth, mask, role);
-	pad_bins(srv_smooth, mask, role); // bin_number was added
+	pad_bins(cli_smooth, bitlen, role);
+	pad_bins(srv_smooth, bitlen, role);
 
 
 	// Permute bins
@@ -277,27 +276,13 @@ int32_t test_psi_circuit(e_role role, const std::string& address, uint16_t port,
 	}
 
 	uint32_t num_comparisons = ncomparisons(T1Expanded, T2Expanded);
-	std::vector<uint32_t> match_result = intersect(T1Expanded, T2Expanded, party, bc);
+	std::vector<uint32_t> match_result = intersect(T1Expanded, T2Expanded, party, bc, bitlen);
 
 	auto it = std::unique(match_result.begin(), match_result.end());
 
 	match_result.resize(std::distance(match_result.begin(), it));
 
 	std::sort(match_result.begin(), match_result.end());
-
-	std::cout << "unique" << std::endl;
-
-	count = 0;
-	for (auto e : match_result){
-		std::cout << e << "\t";
-		count ++;
-		if (count == 5){
-			std::cout << std::endl;
-			count = 0;
-		}
-	}
-
-	std::cout << std::endl;
 
 	main_timer.stop();
 
@@ -311,7 +296,6 @@ int32_t test_psi_circuit(e_role role, const std::string& address, uint16_t port,
 		std::string coutput(strCout.str());
 		int communication = find_communication(coutput);
 	}
-
 
 	std::cout << "total time: " << main_timer.elapsedSeconds() << " seconds, ";
 	std::cout << "cpu time: " << cpu_time_used << " seconds" << std::endl; 
@@ -379,6 +363,7 @@ std::vector<bin> sort_bins_tid_tag(const std::vector<bin> & in_bins, ABYParty * 
 
 std::vector<bin> shuffle_bins(const std::vector<bin> & in_bins, ABYParty * party, BooleanCircuit* bc){
 	uint32_t nbins = in_bins.size();
+	uint32_t words = in_bins[0].data.empty() ? 1 : in_bins[0].data[0].size();
 	share** shr_in = (share**) malloc(sizeof(share*) * nbins);
 	share** shr_out = (share**) malloc(sizeof(share*) * nbins);
 	std::vector<std::vector<uint32_t>> in_vectors = bins2vectors(in_bins);
@@ -429,7 +414,7 @@ std::vector<bin> shuffle_bins(const std::vector<bin> & in_bins, ABYParty * party
 	free(shr_in);
 	free(shr_out);
 
-	return vectors2bins(out_vectors);
+	return vectors2bins(out_vectors, words);
 }
 
 
@@ -448,6 +433,7 @@ std::vector<uint32_t> concat(const std::vector<uint32_t> & in_vec, uint32_t fact
 
 std::vector<bin> unshare_bins(const std::vector<bin> & in_bins, ABYParty * party, BooleanCircuit* bc){
 	uint32_t nbins = in_bins.size();
+	uint32_t words = in_bins[0].data.empty() ? 1 : in_bins[0].data[0].size();
 	share** shr_in = (share**) malloc(sizeof(share*) * nbins);
 	share** shr_out = (share**) malloc(sizeof(share*) * nbins);
 	std::vector<std::vector<uint32_t>> in_vectors = bins2vectors(in_bins);
@@ -472,11 +458,12 @@ std::vector<bin> unshare_bins(const std::vector<bin> & in_bins, ABYParty * party
 	free(shr_in);
 	free(shr_out);
 
-	return vectors2bins(out_vectors);
+	return vectors2bins(out_vectors, words);
 }
 
 std::vector<bin> share_bins(const std::vector<bin> & in_bins, ABYParty * party, BooleanCircuit* bc, e_role my_role, e_role share_role){
 	uint32_t nbins = in_bins.size();
+	uint32_t words = in_bins[0].data.empty() ? 1 : in_bins[0].data[0].size();
 	share** shr_in = (share**) malloc(sizeof(share*) * nbins);
 	share** shr_out = (share**) malloc(sizeof(share*) * nbins);
 	std::vector<std::vector<uint32_t>> in_vectors = bins2vectors(in_bins);
@@ -505,7 +492,7 @@ std::vector<bin> share_bins(const std::vector<bin> & in_bins, ABYParty * party, 
 	free(shr_in);
 	free(shr_out);
 
-	return vectors2bins(out_vectors);
+	return vectors2bins(out_vectors, words);
 }
 
 std::vector<std::vector<uint32_t>> bins2vectors(const std::vector<bin>& bins){
@@ -516,62 +503,44 @@ std::vector<std::vector<uint32_t>> bins2vectors(const std::vector<bin>& bins){
 	return vs;
 }
 
-std::vector<bin> vectors2bins(const std::vector<std::vector<uint32_t>> & vs){
+std::vector<bin> vectors2bins(const std::vector<std::vector<uint32_t>> & vs, uint32_t words){
 	std::vector<bin> bins;
 	for (uint32_t i = 0; i < vs.size(); i ++){
-		bins.push_back(vec2bin(vs[i]));
+		bins.push_back(vec2bin(vs[i], words));
 	}
 	return bins;
 }
 
 std::vector<uint32_t> bin2vec(const bin &b){
-	uint32_t data_size = b.data.size();
 	std::vector<uint32_t> v;
 	v.push_back(b.tid);
 	v.push_back(b.tag);
 	v.push_back(b.bin_number);
 	v.push_back(b.a1);
 	v.push_back(b.a2);
-	for (uint32_t i = 0; i < data_size; i++){
-		v.push_back(b.data[i]);
+	// owaldron NOTE: updated to serialize dynamic-length data
+	for (uint32_t i = 0; i < b.data.size(); i++){
+		v.insert(v.end(), b.data[i].begin(), b.data[i].end());
 	}
 	return v;
 }
 
-bin vec2bin(const std::vector<uint32_t> &v){
+bin vec2bin(const std::vector<uint32_t> &v, uint32_t words){
 	bin b;
 	b.tid = v[0];
 	b.tag = v[1];
 	b.bin_number = v[2];
 	b.a1 = v[3];
 	b.a2 = v[4];
-	for (uint32_t i = 5; i < v.size(); i++){
-		b.data.push_back(v[i]);
+	// owaldron NOTE: updated to deserialize dynamic-length data
+	for (uint32_t i = 5; i + words <= v.size(); i += words){
+		std::vector<uint32_t> elem(v.begin() + i, v.begin() + i + words);
+		b.data.push_back(elem);
 	}
 	return b;
 }
 
-void print_bins(const std::vector<bin>& bins, uint32_t interval){
-	for (uint32_t i = 0; i< bins.size(); i++){
-		std::cout << "tid: " << bins[i].tid << "\ttag: " << bins[i].tag << "\ta1: " << bins[i].a1 << "\ta2:" << bins[i].a2 << std::endl;
-		std::cout << "\t\tbin number: " << bins[i].bin_number;
-		std::cout << "\tfrom " << interval * bins[i].tag << " to " << interval * bins[i].tag + interval - 1 << std::endl;
-		std::cout << "\t\t";
-		uint32_t counter = 0;
-		for (uint32_t j = 0; j < bins[i].data.size(); j++){
-			std::cout << "v: " << bins[i].data[j] << "\t";
-			counter ++;
-			if (counter == 5){
-				counter = 0;
-				std::cout << std::endl << "\t\t";
-			}
-		}
-		std::cout << std::endl;
-	}
-}
-
-
-void pad_bins(std::vector<bin>& bins, uint32_t mask, e_role role){
+void pad_bins(std::vector<bin>& bins, uint32_t bitlen, e_role role){
 	uint32_t nbins = bins.size();
 	uint32_t max_size = 0;
 	for (uint32_t k = 0; k < nbins; k++){
@@ -589,7 +558,9 @@ void pad_bins(std::vector<bin>& bins, uint32_t mask, e_role role){
 		bins[k].a2 = 1;
 		bins[k].bin_number = k;
 		while ((uint32_t) bins[k].data.size() < max_size){
-			bins[k].data.push_back(noise(mask, role));
+			// owaldon NOTE: updated noise function to be random noise
+			// owaldron: Avoids neeing a sentinal value for both parties.
+			bins[k].data.push_back(random_noise(bitlen));
 		}
 	}
 	return;
@@ -605,7 +576,7 @@ void permute(std::vector<bin>& bins){
 			end ++;
 		}
 
-		std::vector<uint32_t> new_bin;
+		std::vector<std::vector<uint32_t>> new_bin;
 		for (uint32_t k = begin; k < end; k++){
 			std::copy(bins[k].data.begin(), bins[k].data.end(), std::back_inserter(new_bin));
 		}
@@ -670,6 +641,21 @@ uint32_t lsh(uint32_t interval, uint32_t input){
 	return input / interval;
 }
 
+// author: owaldron
+// Returns the bin resuling from sampling `num_bits` random bits from input
+uint32_t bitsample_lsh(std::vector<uint32_t> positions, vector<uint32_t> input) {
+	// Extract each selected bit and pack into result
+	uint32_t result = 0;
+	for (uint32_t i = 0; i < positions.size(); i++) {
+		uint32_t word = positions[i] / 32;
+		uint32_t bit  = positions[i] % 32;
+		uint32_t extracted = (input[word] >> bit) & 1;
+		result |= (extracted << i);
+	}
+
+	return result;
+}
+
 uint32_t noise(uint32_t mask, e_role role){
 	// if (tag == empty_code){
 	// 	if (role == SERVER){
@@ -687,6 +673,15 @@ uint32_t noise(uint32_t mask, e_role role){
 	else{
 		return mask + 2;
 	}
+}
+
+
+// author: owaldron
+// Generates random bits of length `bitlen`
+std::vector<uint32_t> random_noise(uint32_t bitlen) {
+	std::vector<uint32_t> noise(bitlen / 32);
+	for (auto& w : noise) w = rand();
+	return noise;
 }
 
 std::vector<uint32_t> BuildShuffleCircuit(share** shr_in, vector<uint32_t> shr_sel_bits,
@@ -812,7 +807,7 @@ std::pair<share*, share*> buildBackwardPassCircuit(BooleanCircuit* bc, share * m
 }
 
 void Fill_dim_forward_pass(std::vector<bin> & in, ABYParty * party, BooleanCircuit* bc, e_role role){
-    std::vector<share *> shr_a1(in.size()), shr_a2(in.size());
+	std::vector<share *> shr_a1(in.size()), shr_a2(in.size());
 	share * one = bc->PutCONSGate(1, (uint32_t) 32);
 	share * two = bc->PutCONSGate(2, (uint32_t) 32);
 	for (uint32_t i = 0; i < in.size(); i++){
@@ -840,6 +835,7 @@ void Fill_dim_backward_pass(std::vector<bin> & in, ABYParty * party, BooleanCirc
 }
 
 void Linear_pass(std::vector<bin> & in, ABYParty * party, BooleanCircuit* bc, e_role role, linear_pass_type t){
+	uint32_t words = in[0].data.empty() ? 1 : in[0].data[0].size();
 	std::vector<std::pair<share*, share*>> out_shr(in.size());
 	std::vector<share *> gt_a1s_shr(in.size()), gt_a2s_shr(in.size()), 
 						tags_eq_shr(in.size()), tids_eq_shr(in.size()), tids_eq_1_shr(in.size()),
@@ -1068,7 +1064,7 @@ void Linear_pass(std::vector<bin> & in, ABYParty * party, BooleanCircuit* bc, e_
 					vbins[i] = out_vector;
 				}
 			}
-			in = vectors2bins(vbins);
+			in = vectors2bins(vbins, words);
 		}
 
 		// std::cout << "b4 reset" << std::endl;
@@ -1133,6 +1129,7 @@ void Fwd_pass_naive(std::vector<bin> & in, ABYParty * party, BooleanCircuit* bc,
 }
 
 std::vector<bin> Oblivious_Expand_old(const std::vector<bin> & in, ABYParty * party, BooleanCircuit* bc, std::vector<uint32_t> by){
+	uint32_t words = in[0].data.empty() ? 1 : in[0].data[0].size();
 	std::vector<share*> shr_ybin(in.size()), shr_yby(in.size()), shr_comp(in.size());
 	std::vector<uint32_t> comp(in.size());
 	std::vector<uint64_t> sums(in.size());
@@ -1211,10 +1208,10 @@ std::vector<bin> Oblivious_Expand_old(const std::vector<bin> & in, ABYParty * pa
 
 		j = j / 2;
 
-		std::vector<bin> b = vectors2bins(vbins);
+		std::vector<bin> b = vectors2bins(vbins, words);
 	}
 
-	std::vector<bin> bins = vectors2bins(vbins);
+	std::vector<bin> bins = vectors2bins(vbins, words);
 
 	t.stop();
 	std::cout << "Hopping: " << t.elapsedSeconds() << " seconds" << std::endl;
@@ -1225,6 +1222,7 @@ std::vector<bin> Oblivious_Expand_old(const std::vector<bin> & in, ABYParty * pa
 
 // does not work because of swapping with non-empty values.
 std::vector<bin> Oblivious_Expand_new(const std::vector<bin> & in, ABYParty * party, BooleanCircuit* bc, std::vector<uint32_t> by){
+	uint32_t words = in[0].data.empty() ? 1 : in[0].data[0].size();
 	std::vector<share*> shr_ybin(in.size()), shr_yby(in.size()), shr_comp(in.size());
 	std::vector<uint32_t> comp(in.size());
 	std::vector<uint64_t> sums(in.size());
@@ -1311,10 +1309,10 @@ std::vector<bin> Oblivious_Expand_new(const std::vector<bin> & in, ABYParty * pa
 
 		j = j / 2;
 
-		std::vector<bin> b = vectors2bins(vbins);
+		std::vector<bin> b = vectors2bins(vbins, words);
 	}
 
-	std::vector<bin> bins = vectors2bins(vbins);
+	std::vector<bin> bins = vectors2bins(vbins, words);
 
 	t.stop();
 	std::cout << "Hopping: " << t.elapsedSeconds() << " seconds" << std::endl;
@@ -1324,6 +1322,7 @@ std::vector<bin> Oblivious_Expand_new(const std::vector<bin> & in, ABYParty * pa
 }
 
 std::vector<bin> Oblivious_Expand_array(const std::vector<bin> & in, ABYParty * party, BooleanCircuit* bc, std::vector<uint32_t> by){
+	uint32_t words = in[0].data.empty() ? 1 : in[0].data[0].size();
 	std::vector<uint32_t> pby(by.size());
 	std::vector<share*> shr_ybin(in.size()),shr_ypbin(in.size()), shr_yby(in.size()), shr_ypby(in.size()), shr_comp(in.size());
 	std::vector<uint32_t> comp(in.size());
@@ -1349,7 +1348,7 @@ std::vector<bin> Oblivious_Expand_array(const std::vector<bin> & in, ABYParty * 
 		b.a1 = 0;
 		b.a2 = 0;
 		while ((uint32_t) b.data.size() < in[0].data.size()){
-			b.data.push_back(0);
+			b.data.push_back(std::vector<uint32_t>(in[0].data[0].size(), 0));
 		}
 		empty_bins[i] = b;
 	}
@@ -1471,7 +1470,7 @@ std::vector<bin> Oblivious_Expand_array(const std::vector<bin> & in, ABYParty * 
 		j = j / 2;
 	}
 
-	std::vector<bin> bins = vectors2bins(vbins);
+	std::vector<bin> bins = vectors2bins(vbins, words);
 
 	t.stop();
 	std::cout << "Hopping: " << t.elapsedSeconds() << " seconds" << std::endl;
@@ -1486,6 +1485,7 @@ std::vector<bin> Oblivious_Expand(const std::vector<bin> & in, ABYParty * party,
 }
 
 std::vector<bin> Oblivious_Expand(const std::vector<bin> & in, ABYParty * party, BooleanCircuit* bc, uint32_t tid){
+	uint32_t words = in[0].data.empty() ? 1 : in[0].data[0].size();
 	std::vector<uint32_t> by;
 	std::vector<share*> out_shr(in.size());
 
@@ -1507,7 +1507,7 @@ std::vector<bin> Oblivious_Expand(const std::vector<bin> & in, ABYParty * party,
 	t.start();
 
 	ostringstream oss;
-    auto cout_buff = std::cout.rdbuf(oss.rdbuf());
+	auto cout_buff = std::cout.rdbuf(oss.rdbuf());
 
 	
 	uint32_t region_size = 1;
@@ -1535,8 +1535,8 @@ std::vector<bin> Oblivious_Expand(const std::vector<bin> & in, ABYParty * party,
 		party->Reset();
 		region_size *= 2;
 	}
-    cout.rdbuf(cout_buff);
-    string capture_cout = oss.str();
+	cout.rdbuf(cout_buff);
+	string capture_cout = oss.str();
 	std::cout << "content captured{" << capture_cout << "}" << std::endl;
 
 	std::cout << "get clear expanded size" << std::endl;
@@ -1567,7 +1567,7 @@ std::vector<bin> Oblivious_Expand(const std::vector<bin> & in, ABYParty * party,
 		b.a1 = 0;
 		b.a2 = 0;
 		while ((uint32_t) b.data.size() < in[0].data.size()){
-			b.data.push_back(0);
+			b.data.push_back(std::vector<uint32_t>(in[0].data[0].size(), 0));
 		}
 		A[i] = b;
 		by.push_back(0);
@@ -1619,7 +1619,7 @@ std::vector<bin> Oblivious_Expand(const std::vector<bin> & in, ABYParty * party,
 	}
 	party->Reset();
 
-	A = vectors2bins(vbins);
+	A = vectors2bins(vbins, words);
 
 	t.stop();
 	std::cout << "Secret sharing the bins: " << t.elapsedSeconds() << " seconds" << std::endl;
@@ -1838,30 +1838,44 @@ uint32_t ncomparisons(const std::vector<bin> & T1, const std::vector<bin> & T2){
 	return size;
 };
 
-std::vector<uint32_t> intersect(const std::vector<bin> & T1, const std::vector<bin> & T2, ABYParty * party, BooleanCircuit * bc){
+std::vector<uint32_t> intersect(const std::vector<bin> & T1, const std::vector<bin> & T2, ABYParty * party, BooleanCircuit * bc, uint32_t bitlen){
 	uint32_t bin_size = T1[0].data.size();
 	uint32_t num_bins = T1.size();
+	uint32_t words = T1[0].data.empty() ? 1 : T1[0].data[0].size();
 	uint32_t size = bin_size * bin_size * num_bins;
 	std::vector<uint32_t> T1expanded, T2expanded;
+
+	// owaldron NOTE: Pre-allocate memory to avoid reallocations
+	T1expanded.reserve(size * words);
+	T2expanded.reserve(size * words);
+
 	for (uint32_t i = 0; i < num_bins; i++){
-		for (uint32_t j = 0; j < bin_size; j ++){
+		for (uint32_t j = 0; j < bin_size; j++){
+			// owaldron NOTE: added loop to unpack dynamically-sized data
 			for (uint32_t k = 0; k < bin_size; k++){
-				T1expanded.push_back(T1[i].data[j]);
-				T2expanded.push_back(T2[i].data[k]);
+				for (uint32_t w = 0; w < words; w++){
+					T1expanded.push_back(T1[i].data[j][w]);
+					T2expanded.push_back(T2[i].data[k][w]);
+				}
 			}
 		}
 	}
 
-	share * shr_T1 = bc->PutSharedSIMDINGate(size, T1expanded.data(), (uint32_t) 32);
-	share * shr_T2 = bc->PutSharedSIMDINGate(size, T2expanded.data(), (uint32_t) 32);
 
-	uint32_t z = 0;
-	share* nmatch = bc->PutSIMDCONSGate(size, &z, (uint32_t) 32);
+	// owaldron NOTE: modified to allow custom bitlen
+	// owaldron: This circuit is where the actual comparison is done
+	share* shr_T1 = bc->PutSharedSIMDINGate(size, T1expanded.data(), bitlen);
+	share* shr_T2 = bc->PutSharedSIMDINGate(size, T2expanded.data(), bitlen);
+	
+	// owaldron: Comparison funciton
+	share* comp = bc->PutEQGate(shr_T1, shr_T2);
+
+	// owaldron NOTE: modified to have `bitlen`-bit length sentinel
+	std::vector<uint32_t> zeros(size * words, 0);
+	share* nmatch = bc->PutSIMDCONSGate(size, zeros.data(), bitlen);
 	nmatch = bc->PutINVGate(nmatch);
-	share * comp = bc->PutEQGate(shr_T1, shr_T2);
-	share * res_shr = bc->PutMUXGate(shr_T1, nmatch, comp);
-
-	share * out_shr = bc->PutOUTGate(res_shr, ALL);
+	share* res_shr = bc->PutMUXGate(shr_T1, nmatch, comp);
+	share* out_shr = bc->PutOUTGate(res_shr, ALL);
 
 	party->ExecCircuit();
 
@@ -1870,13 +1884,16 @@ std::vector<uint32_t> intersect(const std::vector<bin> & T1, const std::vector<b
 	
 	out_shr->get_clear_value_vec(&out, &tmpbitlen, &tmpnvals);
 
-	party->Reset();
-
 	std::vector<uint32_t> match;
 
-	for (int i = 0; i < size; i++){
-		if (out[i] != 0xFFFFFFFF){
-			match.push_back(out[i]);
+	// owaldron NOTE: modified to allow custom bitlen
+	for (uint32_t i = 0; i < size; i++){
+		uint32_t lane_offset = i * words;
+		// owaldron: MUX gate expected to fill SIMD lane with 1's on success, so can just check the first word
+		if (out[lane_offset] != 0xFFFFFFFF){
+			for (uint32_t w = 0; w < words; w++){
+				match.push_back(out[lane_offset + w]);
+			}
 		}
 	}
 
@@ -1915,18 +1932,18 @@ double Timer::elapsedSeconds(){
 
 std::vector<std::string> split(const std::string & s, const std::string & by){
 	std::string regular_exp = "([^" + by + "]*)(?:" + by + "(.*))?";
-    std::regex re(regular_exp);
-    std::smatch match;
-    std::vector<std::string> output;
+	std::regex re(regular_exp);
+	std::smatch match;
+	std::vector<std::string> output;
 	std::string c = s;
-    while (std::regex_search(c, match, re) == true){
-        output.push_back(match.str(1));
-        if (match.size() == 2){
-            break;
-        }
-        c = match.str(2);
-    }
-    return output;
+	while (std::regex_search(c, match, re) == true){
+		output.push_back(match.str(1));
+		if (match.size() == 2){
+			break;
+		}
+		c = match.str(2);
+	}
+	return output;
 }
 
 int find_communication(const std::string & s){
@@ -1937,7 +1954,7 @@ int find_communication(const std::string & s){
 	int total_sent = 0;
 	for (std::string line : v){
 		std::smatch match;
-    	bool success = std::regex_search(line, match, re);
+		bool success = std::regex_search(line, match, re);
 		if (success && match.size() == 3){
 			total_sent+= std::stoi(match.str(1));
 		}
