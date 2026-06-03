@@ -3,6 +3,7 @@ services:
     build: .
     environment:
       - RUN_KEY=${RUN_KEY:-}
+      - INPUT_SAMPLE=${INPUT_SAMPLE:-sample_bloom_bytes}
       - S3_BUCKET=${S3_BUCKET:-}
       - S3_PREFIX=${S3_PREFIX:-benchmark-results}
       - AWS_REGION=${AWS_REGION:-us-east-2}

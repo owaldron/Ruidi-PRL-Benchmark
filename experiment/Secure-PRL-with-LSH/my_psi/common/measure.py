@@ -9,6 +9,12 @@ from signal import SIGTERM
 from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeoutError
 import sys
 
+# Input dataset selection. Each sample lives in inputs/<name>/ and holds
+# server_set.txt and client_set.txt (256-bit line-delimited hex). Pick a sample
+# with the INPUT_SAMPLE env var; defaults to sample_bloom_bytes.
+INPUT_SAMPLE = os.environ.get("INPUT_SAMPLE", "sample_bloom_bytes")
+SERVER_SET = os.path.join("inputs", INPUT_SAMPLE, "server_set.txt")
+CLIENT_SET = os.path.join("inputs", INPUT_SAMPLE, "client_set.txt")
 
 def read_and_delete_file(fname):
     f = open(fname, 'r')
@@ -36,7 +42,7 @@ def experiment(num_eles, num_bins, out, srv_seed=10, cli_seed=100, num_bits=16, 
             "-b", num_bits,
             "-m", num_bins,
             "-s", srv_seed,
-            "-f", "server_set.txt",
+            "-f", SERVER_SET,
             "-t", threshold
         ]], stdout=PIPE, stderr=PIPE)
         process1 = Popen([str(x) for x in [
@@ -46,7 +52,7 @@ def experiment(num_eles, num_bins, out, srv_seed=10, cli_seed=100, num_bits=16, 
             "-b", num_bits,
             "-m", num_bins,
             "-s", cli_seed,
-            "-f", "client_set.txt",
+            "-f", CLIENT_SET,
             "-t", threshold
         ]], stdout=PIPE, stderr=PIPE)
 
@@ -109,11 +115,12 @@ NUM_RUNS = 3
 NUM_BITS = 256
 THRESHOLD = 32
 LSH_BINSIZE = 8
+N_ELES = 512
 
 for run in range(NUM_RUNS):
     print(f"start measuring run #{run}")
 
-    for num_eles in [512, 1024, 2048]:
+    for num_eles in [N_ELES]:
         for num_bins in [LSH_BINSIZE]:
             
             # Generate deterministic seeds based on the initial string seed

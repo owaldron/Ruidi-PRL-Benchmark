@@ -38,12 +38,13 @@ WORKDIR /app/bin
 # Copy the compiled binaries from the builder stage
 COPY --from=builder /usr/src/app/ABY/build/bin /app/bin
 
-# Copy the Python scripts into the bin directory as requested
-COPY Secure-PRL-with-LSH/my_psi/common/gen.py /app/bin/gen.py
+# Copy the experiment driver into the bin directory
 COPY Secure-PRL-with-LSH/my_psi/common/measure.py /app/bin/measure.py
 
-# Generate the input datasets (inp0, inp1) during the image build
-RUN python3 gen.py
+# Copy the whole inputs tree (one subdirectory per sample, each holding
+# server_set.txt / client_set.txt in 256-bit line-delimited hex). measure.py
+# selects a sample via the INPUT_SAMPLE env var.
+COPY Secure-PRL-with-LSH/my_psi/common/inputs /app/bin/inputs
 
 # Move back to the main app directory for the orchestration scripts
 WORKDIR /app

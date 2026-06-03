@@ -33,6 +33,7 @@
 #include <regex>
 #include <random>
 #include <unordered_set>
+#include <stdexcept>
 #define PSI
 
 void input(uint32_t *srv_set, uint32_t *cli_set, uint32_t neles, uint64_t mask){
@@ -72,9 +73,15 @@ void read_file_hex(uint32_t *srv_set, uint32_t *cli_set, uint32_t neles, std::st
 	uint32_t hex_digits = bitlen / 4;
 	ifstream f;
 	f.open(fname);
+	if (!f) {
+		throw std::runtime_error("read_file_hex: could not open " + fname);
+	}
 	std::string line;
 	for (uint32_t i = 0; i < neles; i++) {
-		std::getline(f, line);
+		if (!std::getline(f, line)) {
+			throw std::runtime_error("read_file_hex: expected " + std::to_string(neles)
+				+ " elements but file ended at index " + std::to_string(i));
+		}
 		while (line.size() < hex_digits) line = "0" + line;
 		for (uint32_t w = 0; w < words; w++) {
 			uint32_t val = (uint32_t)std::stoul(line.substr(w * 8, 8), nullptr, 16);
