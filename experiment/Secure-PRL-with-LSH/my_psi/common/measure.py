@@ -107,12 +107,14 @@ with open(out_filename, 'w') as outfile:
 count = 1
 NUM_RUNS = 3
 NUM_BITS = 256
+THRESHOLD = 32
+LSH_BINSIZE = 8
 
 for run in range(NUM_RUNS):
     print(f"start measuring run #{run}")
 
     for num_eles in [512, 1024, 2048]:
-        for num_bins in [8]:
+        for num_bins in [LSH_BINSIZE]:
             
             # Generate deterministic seeds based on the initial string seed
             s_seed = randint(1, 500) * 10 + count
@@ -125,7 +127,7 @@ for run in range(NUM_RUNS):
             try:
                 # Open in append mode for the experiment execution
                 with open(out_filename, 'a') as outfile:
-                    experiment(num_eles, num_bins, outfile, srv_seed=s_seed, cli_seed=c_seed, num_bits=NUM_BITS)
+                    experiment(num_eles, num_bins, outfile, srv_seed=s_seed, cli_seed=c_seed, num_bits=NUM_BITS, threshold=THRESHOLD)
             except Exception as e:
                 print(f"An exception occurred with server seed {s_seed} and client seed {c_seed}: {e}")
                 # Log the specific failure for debugging

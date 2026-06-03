@@ -59,6 +59,10 @@ void read_file(uint32_t *srv_set, uint32_t *cli_set, uint32_t neles, std::string
 	}
 }
 
+// owaldron: ablate different changes one by one to see their effect
+#define USE_BITSAMPLING_LSH 
+#define USE_HAMMING_CMP
+
 // author: owaldron
 // Reads a file storing input bits in hex format
 // Note that both client and server read the same file; this is okay, we 
@@ -188,8 +192,13 @@ int32_t test_psi_circuit(
 		vector<uint32_t> cli_ele(cli_set + i * words, cli_set + i * words + words);
 		vector<uint32_t> srv_ele(srv_set + i * words, srv_set + i * words + words);
 		// owaldron NOTE: updated LSH to use bitsampling
-		cli_bins[bitsample_lsh(positions, cli_ele)].data.push_back(cli_ele);
-		srv_bins[bitsample_lsh(positions, srv_ele)].data.push_back(srv_ele);
+		#ifdef USE_BITSAMPLING_LSH
+			cli_bins[bitsample_lsh(positions, cli_ele)].data.push_back(cli_ele);
+			srv_bins[bitsample_lsh(positions, srv_ele)].data.push_back(srv_ele);
+		#else
+			cli_bins[lsh(neles / nbins, cli_set[i])].data.push_back(cli_set[i]);
+			srv_bins[lsh(neles / nbins, srv_set[i])].data.push_back(srv_set[i]);
+		#endif
 	}
 
 	// Smoothing bins
@@ -1879,14 +1888,19 @@ std::vector<uint32_t> intersect(const std::vector<bin> & T1, const std::vector<b
 	share* shr_T2 = bc->PutSharedSIMDINGate(size, T2expanded.data(), bitlen);
 	
 	// owaldron: Comparison funciton
-	// owaldron NOTE: updated to use Hamming distance compare
-	uint32_t hw_bitlen = std::ceil(std::log2(bitlen + 1));
-    // owaldron: create a vector with 'size' elements, all set to the threshold value.
-    std::vector<uint32_t> thresh_vec(size, threshold);
-    share* s_threshold = bc->PutSIMDCONSGate(size, thresh_vec.data(), hw_bitlen);
-    share* xor_out = bc->PutXORGate(shr_T1, shr_T2);
-    share* hw_out = bc->PutHammingWeightGate(xor_out);
-    share* comp = bc->PutGTGate(s_threshold, hw_out);
+	#ifdef USE_HAMMING_CMP
+		// owaldron NOTE: updated to use Hamming distance compare
+		uint32_t hw_bitlen = std::ceil(std::log2(bitlen + 1));
+		// owaldron: create a vector with 'size' elements, all set to the threshold value.
+		std::vector<uint32_t> thresh_vec(size, threshold);
+		share* s_threshold = bc->PutSIMDCONSGate(size, thresh_vec.data(), hw_bitlen);
+		share* xor_out = bc->PutXORGate(shr_T1, shr_T2);
+		share* hw_out = bc->PutHammingWeightGate(xor_out);
+		share* comp = bc->PutGTGate(s_threshold, hw_out);
+	#else
+		// owaldron: Just use EQ compare!
+		share* comp = bc->PutEQGate(shr_T1, shr_T2);
+	#endif
 
 	// owaldron NOTE: modified to have `bitlen`-bit length sentinel
 	std::vector<uint32_t> zeros(size * words, 0);
